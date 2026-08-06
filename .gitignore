@@ -1,2 +1,11 @@
 # 本地测试用的临时样例数据，不进仓库
 .data/
+
+# build artifacts stay out of the repo
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
