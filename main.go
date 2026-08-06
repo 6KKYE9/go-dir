@@ -1,6 +1,5 @@
-// go-dir 是一个纯标准库实现的目录小工具。
-// 找大文件、按扩展名归类统计、打印目录树——这些在整理磁盘时很常用。
-// 只用到 os、path/filepath、sort，不依赖任何第三方包。
+// go-dir 是目录小工具。
+// 找大文件、按扩展名归类统计、打印目录树、找出空目录——整理磁盘时很常用。
 package main
 
 import (
@@ -8,10 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
-// humanSize 把字节数转成人类友好的 KB/MB/GB。
+// humanSize 把字节数转成人类友好的 B/KB/MB/GB/TB。
 func humanSize(b int64) string {
 	const unit = 1024
 	if b < unit {
@@ -23,6 +23,34 @@ func humanSize(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGT"[exp])
+}
+
+// parseSizeArg 解析带可选单位的大小参数，如 "500"->500B、"2K"->2048、"3M"->3*1024^2、"1G"。
+func parseSizeArg(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("空大小")
+	}
+	mult := int64(1)
+	last := s[len(s)-1]
+	if strings.IndexByte("kKmMgGtT", last) >= 0 {
+		switch strings.ToLower(string(last)) {
+		case "k":
+			mult = 1024
+		case "m":
+			mult = 1024 * 1024
+		case "g":
+			mult = 1024 * 1024 * 1024
+		case "t":
+			mult = 1024 * 1024 * 1024 * 1024
+		}
+		s = s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("无法解析大小: %q", s)
+	}
+	return n * mult, nil
 }
 
 // cmdBig 找大文件：go-dir big [-top N] [-min 大小] <目录>
@@ -39,9 +67,11 @@ func cmdBig(args []string) {
 			}
 		case "-min":
 			if i+1 < len(args) {
-				var m int64
-				fmt.Sscanf(args[i+1], "%d", &m)
-				minSize = m * 1024 // 参数以 KB 计
+				if m, err := parseSizeArg(args[i+1]); err == nil {
+					minSize = m
+				} else {
+					fmt.Println("大小参数无效:", err)
+				}
 				i++
 			}
 		default:
@@ -66,11 +96,15 @@ func cmdBig(args []string) {
 		fmt.Println("遍历失败:", err)
 		return
 	}
+	if len(files) == 0 {
+		fmt.Println("没有符合条件的文件")
+		return
+	}
 	sort.Slice(files, func(i, j int) bool { return files[i].size > files[j].size })
 	if top > len(files) {
 		top = len(files)
 	}
-	fmt.Printf("目录 %s 下最大的 %d 个文件：\n", dir, top)
+	fmt.Printf("目录 %s 下最大的 %d 个文件（共 %d 个匹配）：\n", dir, top, len(files))
 	for _, f := range files[:top] {
 		fmt.Printf("%10s  %s\n", humanSize(f.size), f.path)
 	}
@@ -99,11 +133,13 @@ func cmdTypes(args []string) {
 		return
 	}
 	keys := make([]string, 0, len(counts))
+	total := int64(0)
 	for k := range counts {
 		keys = append(keys, k)
+		total += counts[k]
 	}
 	sort.Strings(keys)
-	fmt.Printf("目录 %s 的文件类型分布：\n", dir)
+	fmt.Printf("目录 %s 的文件类型分布（共 %d 个文件）：\n", dir, total)
 	for _, k := range keys {
 		fmt.Printf("%-14s %d 个\n", k, counts[k])
 	}
@@ -157,13 +193,48 @@ func printTree(dir, prefix string, level, maxDepth int) {
 	}
 }
 
+// cmdEmpty 找出目录下所有空目录（不含任何文件或子目录）：go-dir empty <目录>
+func cmdEmpty(args []string) {
+	dir := "."
+	if len(args) >= 1 {
+		dir = args[0]
+	}
+	var empties []string
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			entries, e2 := os.ReadDir(p)
+			if e2 == nil && len(entries) == 0 {
+				empties = append(empties, p)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Println("遍历失败:", err)
+		return
+	}
+	if len(empties) == 0 {
+		fmt.Println("没有空目录")
+		return
+	}
+	fmt.Printf("找到 %d 个空目录：\n", len(empties))
+	for _, p := range empties {
+		fmt.Println(p)
+	}
+}
+
 func usage() {
 	fmt.Print(`go-dir 目录小工具
 
 用法:
-  go-dir big   [-top N] [-min KB] <目录>   找最大的文件
-  go-dir types <目录>                      按扩展名统计数量
-  go-dir tree  [-d 深度] <目录>            打印目录树
+  go-dir big   [-top N] [-min 大小] <目录>    找最大的文件
+  go-dir types <目录>                         按扩展名统计数量
+  go-dir tree  [-d 深度] <目录>               打印目录树
+  go-dir empty <目录>                         找出空目录
+大小单位支持 K/M/G/T 后缀，如 -min 2M 表示 2 MiB。
 `)
 }
 
@@ -179,6 +250,8 @@ func main() {
 		cmdTypes(os.Args[2:])
 	case "tree":
 		cmdTree(os.Args[2:])
+	case "empty":
+		cmdEmpty(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
