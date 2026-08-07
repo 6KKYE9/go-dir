@@ -17,12 +17,14 @@ func humanSize(b int64) string {
 	if b < unit {
 		return fmt.Sprintf("%d B", b)
 	}
+	// 单位表原本只到 T，遇到 PB/EB 级别的数会直接索引越界 panic
+	const units = "KMGTPE"
 	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
+	for n := b / unit; n >= unit && exp < len(units)-1; n /= unit {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGT"[exp])
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), units[exp])
 }
 
 // parseSizeArg 解析带可选单位的大小参数，如 "500"->500B、"2K"->2048、"3M"->3*1024^2、"1G"。

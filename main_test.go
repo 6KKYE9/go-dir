@@ -25,6 +25,19 @@ func TestHumanSize(t *testing.T) {
 	}
 }
 
+// 单位表原来只有 KMGT 四个，PB/EB 量级会直接索引越界崩掉
+func TestHumanSizeHugeNoPanic(t *testing.T) {
+	for _, b := range []int64{1 << 50, 1 << 60, 1<<62 - 1} {
+		got := humanSize(b)
+		if got == "" {
+			t.Fatalf("humanSize(%d) 返回空", b)
+		}
+	}
+	if got := humanSize(1 << 50); got != "1.0 PB" {
+		t.Fatalf("1PB 应为 \"1.0 PB\"，实际 %q", got)
+	}
+}
+
 func TestParseSizeArg(t *testing.T) {
 	cases := []struct {
 		in   string
